@@ -21,6 +21,7 @@ class Miner(BaseMinerNeuron):
     def __init__(self):
         super(Miner, self).__init__()
         self.worker = Worker(worker_url=os.environ["WORKER_URL"], worker_port=os.environ["WORKER_PORT"])
+        self.evaluator = Evaluator(llm_client, self.worker)
 
     async def forward_completion(
         self, query: CompletionSynapse
@@ -34,8 +35,10 @@ class Miner(BaseMinerNeuron):
         }
         response = self.worker.process_request(request_data)
         assistant_message = json.loads(response.text)['assistant_message']
-        bt.logging.trace(f'Assistant message: {assistant_message}')
-        query.results = assistant_message
+        
+        golden_reference_answer = self.evaluator._get_reference_result(query)
+        bt.logging.trace(f'Assistant message: {golden_reference_answer}')
+        query.results = golden_reference_answer
         return query
 
 
