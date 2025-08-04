@@ -203,9 +203,43 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Calculate the average reward for each uid across non-zero values.
         # Replace any NaN values with 0.
-        raw_weights = torch.nn.functional.normalize(self.scores, p=1, dim=0).numpy()
+        bt.logging.debug(f"Original scores before normalization: {self.scores}")
+        bt.logging.debug(f"Scores sum: {self.scores.sum()}")
+        bt.logging.debug(f"Non-zero scores count: {(self.scores > 0).sum()}")
+        
+        # Only normalize if we have non-zero scores
+        if self.scores.sum() > 0:
+            raw_weights = torch.nn.functional.normalize(self.scores, p=1, dim=0).numpy()
+        else:
+            bt.logging.warning("All scores are zero! Using small random weights to break symmetry.")
+            # Use small random weights instead of uniform to break symmetry
+            import numpy as np
+            raw_weights = (np.random.random(len(self.scores)) * 0.1 + 0.01).astype(np.float32)
+            raw_weights = raw_weights / raw_weights.sum()  # Normalize to sum to 1
 
         bt.logging.debug("raw_weights", raw_weights)
+        
+        # Log weight setting process to Supabase if available
+        if hasattr(self, 'supabase_mode') and self.supabase_mode and hasattr(self, 'supabase'):
+            try:
+                weight_debug_data = {
+                    "scores": self.scores.tolist(),
+                    "scores_sum": float(self.scores.sum()),
+                    "non_zero_scores_count": int((self.scores > 0).sum()),
+                    "raw_weights": raw_weights.tolist(),
+                    "raw_weights_sum": float(raw_weights.sum()),
+                    "raw_weights_max": float(raw_weights.max()),
+                    "raw_weights_min": float(raw_weights.min()),
+                    "step": getattr(self, 'step', 0)
+                }
+                
+                self.supabase.table('monitoring').insert({
+                    "uid": getattr(self, 'uid', 0),
+                    "operation": "set_weights",
+                    "data": weight_debug_data,
+                }).execute()
+            except Exception as e:
+                bt.logging.warning(f"Error reporting weight data to Supabase: {e}")
         bt.logging.debug("raw_weight_uids", self.metagraph.uids)
         # Process the raw weights to final_weights via subtensor limitations.
         (
@@ -289,20 +323,81 @@ class BaseValidatorNeuron(BaseNeuron):
             # Replace any NaN values in rewards with 0.
             rewards = torch.nan_to_num(rewards, 0)
 
+        bt.logging.warning(f"UPDATE_SCORES: Input rewards: {rewards}")
+        bt.logging.warning(f"UPDATE_SCORES: Input uids: {uids}")
+        bt.logging.warning(f"UPDATE_SCORES: Device: {self.device}")
+        bt.logging.warning(f"UPDATE_SCORES: Metagraph size: {len(self.scores)}")
+        bt.logging.warning(f"UPDATE_SCORES: Alpha: {self.config.neuron.moving_average_alpha}")
+        
+        # Check UID validity
+        for uid in uids:
+            if uid >= len(self.scores) or uid < 0:
+                bt.logging.error(f"UPDATE_SCORES: INVALID UID: {uid} (scores length: {len(self.scores)})")
+                return
+        
+        # Save old scores for comparison
+        old_scores = {}
+        for uid in uids:
+            old_scores[uid] = self.scores[uid].clone()
+            bt.logging.warning(f"UPDATE_SCORES: OLD SCORE: UID {uid} = {old_scores[uid]:.6f}")
+
+        bt.logging.debug(f"Input rewards: {rewards}")
+        bt.logging.debug(f"Input uids: {uids}")
+        bt.logging.debug(f"Current scores before update: {self.scores}")
+        bt.logging.debug(f"Alpha (moving_average_alpha): {self.config.neuron.moving_average_alpha}")
+
         # Compute forward pass rewards, assumes uids are mutually exclusive.
         # shape: [ metagraph.n ]
         scattered_rewards: torch.FloatTensor = self.scores.scatter(
-            0, uids.clone().detach().to(self.device), rewards
+            0, torch.tensor(uids).clone().detach().to(self.device), rewards.to(self.device)
         ).to(self.device)
-        bt.logging.debug(f"Scattered rewards: {rewards}")
+        
+        bt.logging.warning(f"UPDATE_SCORES: Scattered rewards tensor shape: {scattered_rewards.shape}")
+        bt.logging.debug(f"Scattered rewards: {scattered_rewards}")
+        
+        # Show what changed in scattered_rewards
+        for uid in uids:
+            bt.logging.warning(f"UPDATE_SCORES: SCATTERED: UID {uid} = {scattered_rewards[uid]:.6f} (was {self.scores[uid]:.6f})")
 
         # Update scores with rewards produced by this step.
         # shape: [ metagraph.n ]
         alpha: float = self.config.neuron.moving_average_alpha
+        old_scores_tensor = self.scores.clone()
+        
         self.scores: torch.FloatTensor = alpha * scattered_rewards + (
             1 - alpha
         ) * self.scores.to(self.device)
+        
+        bt.logging.warning(f"UPDATE_SCORES: AFTER MOVING AVERAGE:")
+        for uid in uids:
+            old_val = old_scores_tensor[uid]
+            scattered_val = scattered_rewards[uid] 
+            new_val = self.scores[uid]
+            calculation = f"{alpha} * {scattered_val:.6f} + {1-alpha} * {old_val:.6f} = {new_val:.6f}"
+            bt.logging.warning(f"UPDATE_SCORES:   UID {uid}: {calculation}")
+        
         bt.logging.debug(f"Updated moving avg scores: {self.scores}")
+        bt.logging.debug(f"Non-zero scores after update: {(self.scores > 0).sum()}")
+        bt.logging.warning(f"UPDATE_SCORES: Non-zero scores after update: {(self.scores > 0).sum()}")
+        
+        # Show top scores after update
+        if len(self.scores) > 0:
+            top_indices = torch.topk(self.scores, k=min(10, len(self.scores))).indices
+            bt.logging.warning(f"UPDATE_SCORES: TOP 10 SCORES AFTER UPDATE:")
+            for i, idx in enumerate(top_indices):
+                is_updated = idx.item() in uids
+                marker = "UPDATED" if is_updated else ""
+                bt.logging.warning(f"UPDATE_SCORES:   {i+1}. UID {idx}: {self.scores[idx]:.6f} {marker}")
+            
+            # Show bottom scores
+            bottom_indices = torch.topk(self.scores, k=min(10, len(self.scores)), largest=False).indices
+            bt.logging.warning(f"UPDATE_SCORES: BOTTOM 10 SCORES AFTER UPDATE:")
+            for i, idx in enumerate(bottom_indices):
+                is_updated = idx.item() in uids
+                marker = "UPDATED" if is_updated else ""
+                bt.logging.warning(f"UPDATE_SCORES:   {i+1}. UID {idx}: {self.scores[idx]:.6f} {marker}")
+        
+        bt.logging.warning(f"UPDATE_SCORES: Total scores sum: {self.scores.sum():.6f}")
 
     def save_state(self):
         """Saves the state of the validator to a file."""
