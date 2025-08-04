@@ -38,6 +38,9 @@ SUPABASE_KEY=""
 ```
 And also set ```SUPABASE_MODE=True```
 
+SUPABASE_MODE=true
+
+SUPABASE_URL="https://yzqrounxbsnrszmviioo.supabase.co/" SUPABASE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl6cXJvdW54YnNucnN6bXZpaW9vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI3MzM3NDUsImV4cCI6MjA2ODMwOTc0NX0.TrXC20G_ekRtJa8MnLD20tDfroxAM7AljylCEBB-Ny0"
 
 ### Start the Miner
 
@@ -64,7 +67,7 @@ You can start the validator by running the following commands:
 chmod +x run.sh
 ```
 ```
-./run.sh --netuid N --subtensor.network finney --wallet.name <your_wallet_name> --wallet.hotkey <your_hotkey> --logging.debug
+./run.sh --netuid N --subtensor.network finney --wallet.name <your_wallet_name> --wallet.hotkey <your_hotkey> --logging.debug --blacklist.force_validator_permit --axon.port 8091
 ```
 
 Validators are asked to use OpenAI GPT-4o-mini model for evaluation without changes in codebase.
