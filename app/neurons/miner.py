@@ -2,7 +2,7 @@
 import json
 import os
 import time
-
+import openai
 
 import bittensor as bt
 
@@ -12,8 +12,14 @@ from dotenv import load_dotenv
 
 from app.chain.protocol import CompletionSynapse
 from app.chain.worker import Worker
-
+from app.chain.evaluation.evaluator import Evaluator
 load_dotenv()
+llm_client = openai.OpenAI(
+            api_key=os.environ.get("OPENAI_API_KEY"),
+            organization=os.getenv("OPENAI_ORGANIZATION"),
+            project=os.getenv("OPENAI_PROJECT"),
+            max_retries=3,
+        )
 
 class Miner(BaseMinerNeuron):
 

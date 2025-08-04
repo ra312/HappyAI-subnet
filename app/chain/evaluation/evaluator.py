@@ -33,7 +33,8 @@ class Evaluator:
         self.reference_evaluator = ReferenceEvaluator()
         self.worker = worker
         load_dotenv()
-        self.supabase_mode = eval(os.environ.get("SUPABASE_MODE"))
+        # self.supabase_mode = eval(os.environ.get("SUPABASE_MODE", True))
+        self.supabase_mode = True
         if self.supabase_mode:
           self.supabase = create_client(
               supabase_url=os.environ.get("SUPABASE_URL"),
