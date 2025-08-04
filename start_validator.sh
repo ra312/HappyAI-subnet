@@ -1,0 +1,1 @@
+./run.sh --netuid 103 --subtensor.network finney --wallet.name ckli03 --wallet.hotkey hkli03 --logging.debug --blacklist.force_validator_permit --axon.port 54619
